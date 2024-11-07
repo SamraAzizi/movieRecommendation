@@ -1,1 +1,6 @@
-
+pandas
+numpy
+streamlit
+langchain
+langchain-community
+ollama
