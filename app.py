@@ -141,6 +141,8 @@ def main():
                         if movie['cast']:
                             st.write(f"**Cast:** {movie['cast']}")
 
+   
+    
     # Footer
     st.markdown("---")
     st.markdown("Made with ❤️ using Streamlit")
