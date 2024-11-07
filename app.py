@@ -1,4 +1,15 @@
+import streamlit as st
+import pandas as pd
+import os
+from langchain_community.llms import Ollama
+from langchain.prompts import PromptTemplate
 
+# Configure Streamlit page
+st.set_page_config(
+    page_title="Netflix Movie Recommender",
+    page_icon="🎬",
+    layout="wide"
+)
 
 # Load data function with caching
 @st.cache_data
