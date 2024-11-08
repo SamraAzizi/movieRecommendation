@@ -21,7 +21,7 @@ To run this application, ensure you have the following Python packages installed
 
 You can install the required packages using pip:
 
-```bash```
+```bash`
 
 pip install streamlit pandas langchain_community
 
