@@ -21,5 +21,29 @@ To run this application, ensure you have the following Python packages installed
 
 You can install the required packages using pip:
 
-```bash
+```bash```
+
 pip install streamlit pandas langchain_community
+
+
+# Code Explanation
+
+## `app.py`
+
+This file contains the Streamlit application logic. It includes:
+
+- **Data Loading**: Loads the dataset using caching for performance.
+- **MovieRecommender Class**: Contains methods for generating recommendations based on user input.
+- **Tabs**: Organizes the interface into three sections: Movie Search, Personalized Recommendations, and Explore Movies.
+
+## `cli.py`
+
+This file provides a command-line interface for the recommender system. Users can interact with the recommender through a text-based menu.
+
+## `recommender.py`
+
+This file contains the core logic for the `MovieRecommender` class, which handles:
+
+- **Loading the dataset**
+- **Generating content-based recommendations**
+- **Generating personalized recommendations based on user preferences**
