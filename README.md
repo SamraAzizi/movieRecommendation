@@ -25,7 +25,15 @@ You can install the required packages using pip:
 
 pip install streamlit pandas langchain_community
 ```
+# Usage
 
+## Running the Streamlit App
+
+To run the Streamlit application, execute the following command in your terminal:
+
+```bash
+streamlit run app.py
+```
 # Code Explanation
 
 ## `app.py`
