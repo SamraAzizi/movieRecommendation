@@ -1,151 +1,183 @@
 import streamlit as st
 import pandas as pd
-import os
-from langchain_community.llms import Ollama
-from langchain.prompts import PromptTemplate
+import numpy as np
+from sklearn.feature_extraction.text import CountVectorizer
+from sklearn.metrics.pairwise import cosine_similarity
+import ast
 
-# Configure Streamlit page
-st.set_page_config(
-    page_title="Netflix Movie Recommender",
-    page_icon="🎬",
-    layout="wide"
-)
+# Custom function to safely convert string to list
+def safe_literal_eval(val):
+    try:
+        return ast.literal_eval(val)
+    except (ValueError, SyntaxError):
+        return []
 
-# Load data function with caching
+# Custom function to extract director name
+def get_director(x):
+    crew = safe_literal_eval(x)
+    if not isinstance(crew, list):
+        return ""
+    for i in crew:
+        if i.get('job') == 'Director':
+            return i.get('name', '')
+    return ""
+
+# Custom function to get top elements
+def get_list(x):
+    if isinstance(x, list):
+        names = [i['name'] for i in x if 'name' in i]
+        return names[:3] if len(names) > 3 else names
+    return []
+
+# Custom function to clean data
+def clean_data(x):
+    if isinstance(x, list):
+        return [str.lower(i.replace(" ", "")) for i in x]
+    else:
+        if isinstance(x, str):
+            return str.lower(x.replace(" ", ""))
+        else:
+            return ''
+
+# Load and process data
 @st.cache_data
 def load_data():
     try:
-        df = pd.read_csv('./data/netflix_titles.csv')
-        return df.fillna('')
+        # Load datasets
+        movies = pd.read_csv('tmdb_5000_movies.csv')
+        credits = pd.read_csv('tmdb_5000_credits.csv')
+        
+        st.success("✅ Dataset files found!")
+        
+        # Merge datasets
+        credits.rename(columns={'movie_id': 'id'}, inplace=True)
+        movies = movies.merge(credits, on='id')
+        
+        # Features for recommendation
+        features = ['cast', 'crew', 'keywords', 'genres']
+        
+        for feature in features:
+            movies[feature] = movies[feature].apply(safe_literal_eval)
+        
+        # Extract director
+        movies['director'] = movies['crew'].apply(get_director)
+        
+        # Extract features
+        movies['cast'] = movies['cast'].apply(get_list)
+        movies['keywords'] = movies['keywords'].apply(get_list)
+        movies['genres'] = movies['genres'].apply(get_list)
+        
+        # Clean data
+        features_to_clean = ['cast', 'keywords', 'director', 'genres']
+        for feature in features_to_clean:
+            movies[feature] = movies[feature].apply(clean_data)
+        
+        # Create combined features
+        def create_soup(x):
+            return ' '.join(x['keywords']) + ' ' + ' '.join(x['cast']) + ' ' + x['director'] + ' ' + ' '.join(x['genres'])
+        
+        movies['soup'] = movies.apply(create_soup, axis=1)
+        
+        return movies
+    
+    except FileNotFoundError:
+        st.error("❌ Dataset files not found. Please ensure both files are in the same directory.")
+        return None
     except Exception as e:
-        st.error(f"Error loading data: {str(e)}")
+        st.error(f"❌ Error processing data: {e}")
         return None
 
-class MovieRecommender:
-    def __init__(self, df):
-        self.df = df
+# Recommendation function
+def get_recommendations(title, movies, cosine_sim):
+    try:
+        # Reset index and create mapping
+        indices = pd.Series(movies.index, index=movies['title_x']).drop_duplicates()
+        
+        # Get the index of the movie
+        idx = indices[title]
+        
+        # Get similarity scores
+        sim_scores = list(enumerate(cosine_sim[idx]))
+        
+        # Sort movies based on similarity scores
+        sim_scores = sorted(sim_scores, key=lambda x: x[1], reverse=True)
+        
+        # Get top 10 similar movies
+        sim_scores = sim_scores[1:11]
+        
+        # Get movie indices
+        movie_indices = [i[0] for i in sim_scores]
+        
+        # Return top 10 similar movies
+        return movies['title_x'].iloc[movie_indices]
     
-    def get_content_based_recommendations(self, title):
-        movie = self.df[self.df['title'].str.lower() == title.lower()]
-        
-        if len(movie) == 0:
-            similar_titles = self.df[self.df['title'].str.lower().str.contains(title.lower(), na=False)]
-            if len(similar_titles) > 0:
-                return similar_titles.head(5)
-            return None
-        
-        genre = movie['listed_in'].iloc[0]
-        similar_movies = self.df[
-            (self.df['listed_in'].str.contains(genre, na=False)) & 
-            (self.df['title'] != movie['title'].iloc[0])
-        ].head(5)
-        
-        return similar_movies
+    except KeyError:
+        st.error("❌ Movie not found in database. Please select another movie.")
+        return pd.Series([])
+    except Exception as e:
+        st.error(f"❌ Error generating recommendations: {e}")
+        return pd.Series([])
 
-    def get_personalized_recommendation(self, preferences):
-        keywords = preferences.lower().split()
-        matched_movies = self.df[
-            self.df['description'].str.lower().apply(
-                lambda x: any(keyword in x for keyword in keywords)
-            ) |
-            self.df['listed_in'].str.lower().apply(
-                lambda x: any(keyword in x for keyword in keywords)
-            )
-        ].sample(n=5)
-        
-        return matched_movies
-
+# Main app
 def main():
-    st.title("🎬 Netflix Movie Recommender")
+    st.set_page_config(page_title="Movie Recommender", page_icon="🎬", layout="wide")
+    
+    st.title("🎬 Movie Recommendation System")
+    st.markdown("Discover movies similar to your favorites based on cast, crew, genres, and keywords!")
     
     # Load data
-    df = load_data()
+    with st.spinner('Loading movie database...'):
+        movies = load_data()
     
-    if df is None:
-        st.error("Failed to load the movie database. Please check if the data file exists in the correct location.")
-        return
+    if movies is None:
+        st.stop()
     
-    # Initialize recommender
-    recommender = MovieRecommender(df)
+    st.success(f"✅ Successfully loaded {len(movies)} movies!")
     
-    # Create tabs
-    tab1, tab2, tab3 = st.tabs(["🎯 Movie Search", "🎨 Personalized", "🔍 Explore"])
+    # Create recommendation engine
+    with st.spinner('Building recommendation engine... This may take a moment...'):
+        count_vectorizer = CountVectorizer(stop_words='english', max_features=5000)
+        count_matrix = count_vectorizer.fit_transform(movies['soup'])
+        cosine_sim = cosine_similarity(count_matrix, count_matrix)
     
-    # Tab 1: Movie-based Recommendations
-    with tab1:
-        st.header("Find Similar Movies")
-        movie_title = st.text_input("Enter a movie title:")
-        
-        if movie_title:
-            with st.spinner('Finding recommendations...'):
-                recommendations = recommender.get_content_based_recommendations(movie_title)
+    st.success("✅ Recommendation engine ready!")
+    
+    # Sidebar for movie selection
+    st.sidebar.header("🎥 Find Similar Movies")
+    movie_list = movies['title_x'].sort_values().tolist()
+    selected_movie = st.sidebar.selectbox("Select a movie you like:", movie_list)
+    
+    # Number of recommendations
+    num_recommendations = st.sidebar.slider("Number of recommendations:", 5, 20, 10)
+    
+    if st.sidebar.button("🎯 Get Recommendations", type="primary"):
+        with st.spinner(f'Finding movies similar to "{selected_movie}"...'):
+            recommendations = get_recommendations(selected_movie, movies, cosine_sim)
+            
+            if not recommendations.empty:
+                st.header(f"🎭 Movies Similar to **{selected_movie}**")
                 
-                if recommendations is None:
-                    st.warning("Movie not found in the database. Please try another title.")
-                elif len(recommendations) == 5 and 'title' not in movie_title.lower():
-                    st.info("Did you mean one of these movies?")
-                    for _, movie in recommendations.iterrows():
-                        st.write(f"- {movie['title']} ({movie['release_year']})")
-                else:
-                    st.success("Here are your recommendations:")
-                    cols = st.columns(5)
-                    for idx, (_, movie) in enumerate(recommendations.iterrows()):
-                        with cols[idx]:
-                            st.subheader(movie['title'])
-                            st.caption(f"Year: {movie['release_year']}")
-                            st.write(f"**Genre:** {movie['listed_in']}")
-                            with st.expander("More Info"):
-                                st.write(movie['description'])
-                                if movie['director']:
-                                    st.write(f"**Director:** {movie['director']}")
-                                if movie['cast']:
-                                    st.write(f"**Cast:** {movie['cast']}")
-    
-    # Tab 2: Personalized Recommendations
-    with tab2:
-        st.header("Get Personalized Recommendations")
-        preferences = st.text_area(
-            "What kind of movies do you like?",
-            placeholder="Example: action movies with strong female leads"
-        )
-        
-        if preferences:
-            with st.spinner('Finding personalized recommendations...'):
-                recommendations = recommender.get_personalized_recommendation(preferences)
-                st.success("Here are your personalized recommendations:")
+                # Display recommendations in columns
+                cols = st.columns(2)
+                for i, movie in enumerate(recommendations.head(num_recommendations)):
+                    with cols[i % 2]:
+                        st.write(f"**{i+1}. {movie}**")
                 
-                for _, movie in recommendations.iterrows():
-                    with st.expander(f"{movie['title']} ({movie['release_year']})"):
-                        st.write(f"**Genre:** {movie['listed_in']}")
-                        st.write(f"**Description:** {movie['description']}")
-                        if movie['director']:
-                            st.write(f"**Director:** {movie['director']}")
-                        if movie['cast']:
-                            st.write(f"**Cast:** {movie['cast']}")
+                # Show movie details
+                with st.expander("ℹ️ About the selected movie"):
+                    selected_movie_data = movies[movies['title_x'] == selected_movie].iloc[0]
+                    st.write(f"**Director:** {selected_movie_data['director'].title()}")
+                    st.write(f"**Genres:** {', '.join([g.title() for g in selected_movie_data['genres']])}")
+                    if pd.notna(selected_movie_data['overview']):
+                        st.write(f"**Overview:** {selected_movie_data['overview']}")
+            else:
+                st.warning("No recommendations found. Please try another movie.")
     
-    # Tab 3: Explore Movies
-    with tab3:
-        st.header("Explore Movies")
-        col1, col2 = st.columns([2,1])
-        with col1:
-            num_movies = st.slider("Number of random movies to show:", 5, 20, 10)
-        with col2:
-            if st.button("🎲 Show Random Movies"):
-                sample_movies = df.sample(n=num_movies)
-                for _, movie in sample_movies.iterrows():
-                    with st.expander(f"{movie['title']} ({movie['release_year']})"):
-                        st.write(f"**Genre:** {movie['listed_in']}")
-                        st.write(f"**Description:** {movie['description']}")
-                        if movie['director']:
-                            st.write(f"**Director:** {movie['director']}")
-                        if movie['cast']:
-                            st.write(f"**Cast:** {movie['cast']}")
-
-   
-    
-    # Footer
-    st.markdown("---")
-    st.markdown("Made with ❤️ using Streamlit")
+    # Dataset info
+    with st.expander("📊 Dataset Information"):
+        st.write(f"**Total movies in database:** {len(movies)}")
+        st.write("**Sample of available movies:**")
+        st.dataframe(movies[['title_x', 'genres']].head(10), use_container_width=True)
 
 if __name__ == "__main__":
     main()

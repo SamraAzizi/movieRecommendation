@@ -1,10 +1,16 @@
 import pandas as pd
 import numpy as np
-from langchain_community.llms import Ollama
-from langchain.prompts import PromptTemplate
 import warnings
 import os
 warnings.filterwarnings('ignore')
+
+# Optional imports for Ollama functionality
+try:
+    from langchain_community.llms import Ollama
+    from langchain.prompts import PromptTemplate
+    OLLAMA_AVAILABLE = True
+except ImportError:
+    OLLAMA_AVAILABLE = False
 
 class MovieRecommender:
     def __init__(self, data_folder_path):
@@ -87,15 +93,18 @@ class MovieRecommender:
         return response
 
     def get_ollama_recommendations(self, title):
+        if not OLLAMA_AVAILABLE:
+            return "Ollama and LangChain are not installed. Please install them to use AI-powered recommendations."
+
         # Initialize Ollama
         llm = Ollama(model="llama2")
-        
+
         # Find the movie
         movie = self.df[self.df['title'].str.lower() == title.lower()]
-        
+
         if len(movie) == 0:
             return "Movie not found in the database."
-        
+
         # Create a prompt for the LLM
         prompt_template = """
         Based on this movie:
@@ -114,20 +123,20 @@ class MovieRecommender:
         2. Movie Title - Detailed explanation of similarity
         etc.
         """
-        
+
         # Get similar movies based on genre
         genre = movie['listed_in'].iloc[0]
         similar_movies = self.df[
-            (self.df['listed_in'].str.contains(genre, na=False)) & 
+            (self.df['listed_in'].str.contains(genre, na=False)) &
             (self.df['title'] != movie['title'].iloc[0])
         ].head(5)
-        
+
         # Format similar movies for prompt
         similar_movies_text = "\n".join([
             f"- {row['title']} ({row['release_year']}) - {row['description'][:100]}..."
             for _, row in similar_movies.iterrows()
         ])
-        
+
         # Prepare movie details
         movie_details = {
             "title": movie['title'].iloc[0],
@@ -137,15 +146,15 @@ class MovieRecommender:
             "cast": movie['cast'].iloc[0],
             "similar_movies": similar_movies_text
         }
-        
+
         # Create and format prompt
         prompt = PromptTemplate(
             input_variables=["title", "description", "listed_in", "director", "cast", "similar_movies"],
             template=prompt_template
         )
         formatted_prompt = prompt.format(**movie_details)
-        
+
         # Get LLM response
         response = llm.invoke(formatted_prompt)
-        
+
         return response
